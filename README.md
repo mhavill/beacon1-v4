@@ -4,7 +4,7 @@ Firmware for the ChromaVertex arena corner beacons.
 Each beacon is a 267mm WS2812B LED tower (16 LEDs, 8 active) mounted on an  
 ESP32-C3 SuperMini, used to provide visual position references for the VertexBot swarm.
 
-![Beacon](../documentation/beacon.png)
+![Beacon](/documentation/beacon.png)
 
 ---
 
