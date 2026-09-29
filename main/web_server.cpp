@@ -13,6 +13,11 @@
  * Provisioning mode endpoints (when in fallback AP):
  *   GET  /          — WiFi provisioning page (scan + credential entry)
  *   POST /provision — Submit SSID + password, test and save
+ *
+ * Buffer sizing notes (IDF 5.5.1 -Werror=format-truncation):
+ *   CSS string is ~1326 bytes — all buffers embedding it must be >= 2048
+ *   Scan options buffer: 16 networks * ~128 bytes = ~2048 bytes minimum
+ *   Main page html: 6144 bytes to accommodate CSS + dynamic content
  */
 
 #include "web_server.h"
@@ -35,6 +40,38 @@ static const char* TAG = "web_server";
 // ---------------------------------------------------------------------------
 static const char* AUTH_USERNAME = "admin";
 static const char* AUTH_PASSWORD = "beacon1";
+
+// ---------------------------------------------------------------------------
+// Shared CSS — ~1326 bytes
+// All buffers that embed this via %s must be sized accordingly
+// ---------------------------------------------------------------------------
+static const char* CSS =
+    "body{font-family:sans-serif;max-width:420px;margin:40px auto;padding:0 20px;background:#111;color:#eee;}"
+    "h1{color:#0ff;font-size:1.4em;margin-bottom:4px;}"
+    "h2{color:#888;font-size:0.95em;font-weight:normal;margin-top:24px;margin-bottom:8px;"
+    "   border-top:1px solid #333;padding-top:12px;}"
+    "label{display:block;margin-top:16px;color:#aaa;font-size:0.9em;}"
+    "input,select{width:100%;padding:10px;font-size:1em;"
+    "  background:#222;color:#fff;border:1px solid #444;border-radius:4px;"
+    "  box-sizing:border-box;margin-top:4px;}"
+    "button{margin-top:12px;width:100%;padding:12px;font-size:1em;"
+    "  background:#0ff;color:#000;border:none;border-radius:4px;"
+    "  cursor:pointer;font-weight:bold;}"
+    "button.warn{background:#f80;}"
+    "button.danger{background:#f44;}"
+    "button:active{opacity:0.8;}"
+    ".status{margin-top:16px;padding:10px;background:#1a1a1a;border-radius:4px;"
+    "  font-size:0.85em;color:#888;}"
+    ".seq-name{color:#ff0;font-weight:bold;}"
+    ".ver{color:#555;font-size:0.8em;}"
+    ".msg{margin-top:12px;padding:10px;border-radius:4px;font-size:0.9em;}"
+    ".msg.ok{background:#1a3a1a;color:#4f4;}"
+    ".msg.err{background:#3a1a1a;color:#f44;}"
+    "#ota-progress{width:100%;height:6px;background:#333;border-radius:3px;"
+    "  margin-top:8px;display:none;}"
+    "#ota-bar{height:6px;background:#f80;border-radius:3px;width:0%;"
+    "  transition:width 0.3s;}"
+    "#ota-status{margin-top:8px;font-size:0.85em;min-height:1.2em;}";
 
 // ---------------------------------------------------------------------------
 // Basic auth
@@ -70,48 +107,39 @@ static esp_err_t send_auth_challenge(httpd_req_t* req)
 }
 
 // ---------------------------------------------------------------------------
-// Shared CSS
+// Helper: send a page using chunked transfer to avoid large stack buffers
+// CSS is sent as its own chunk so it never needs to fit in a snprintf buffer
 // ---------------------------------------------------------------------------
-static const char* CSS =
-    "body{font-family:sans-serif;max-width:420px;margin:40px auto;padding:0 20px;background:#111;color:#eee;}"
-    "h1{color:#0ff;font-size:1.4em;margin-bottom:4px;}"
-    "h2{color:#888;font-size:0.95em;font-weight:normal;margin-top:24px;margin-bottom:8px;"
-    "   border-top:1px solid #333;padding-top:12px;}"
-    "label{display:block;margin-top:16px;color:#aaa;font-size:0.9em;}"
-    "input,select{width:100%;padding:10px;font-size:1em;"
-    "  background:#222;color:#fff;border:1px solid #444;border-radius:4px;"
-    "  box-sizing:border-box;margin-top:4px;}"
-    "button{margin-top:12px;width:100%;padding:12px;font-size:1em;"
-    "  background:#0ff;color:#000;border:none;border-radius:4px;"
-    "  cursor:pointer;font-weight:bold;}"
-    "button.warn{background:#f80;}"
-    "button.danger{background:#f44;}"
-    "button:active{opacity:0.8;}"
-    ".status{margin-top:16px;padding:10px;background:#1a1a1a;border-radius:4px;"
-    "  font-size:0.85em;color:#888;}"
-    ".seq-name{color:#ff0;font-weight:bold;}"
-    ".ver{color:#555;font-size:0.8em;}"
-    ".msg{margin-top:12px;padding:10px;border-radius:4px;font-size:0.9em;}"
-    ".msg.ok{background:#1a3a1a;color:#4f4;}"
-    ".msg.err{background:#3a1a1a;color:#f44;}"
-    "#ota-progress{width:100%;height:6px;background:#333;border-radius:3px;"
-    "  margin-top:8px;display:none;}"
-    "#ota-bar{height:6px;background:#f80;border-radius:3px;width:0%;"
-    "  transition:width 0.3s;}"
-    "#ota-status{margin-top:8px;font-size:0.85em;min-height:1.2em;}";
+static void send_page_header(httpd_req_t* req, const char* title)
+{
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_sendstr_chunk(req,
+        "<!DOCTYPE html><html><head>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>");
+    static char title_buf[64];
+    snprintf(title_buf, sizeof(title_buf), "<title>%s</title><style>", title);
+    httpd_resp_sendstr_chunk(req, title_buf);
+    httpd_resp_sendstr_chunk(req, CSS);
+    httpd_resp_sendstr_chunk(req, "</style></head><body>");
+}
+
+static void send_page_footer(httpd_req_t* req)
+{
+    httpd_resp_sendstr_chunk(req, "</body></html>");
+    httpd_resp_sendstr_chunk(req, NULL);  // end chunked response
+}
 
 // ---------------------------------------------------------------------------
 // GET / — Provisioning page (shown when in AP mode)
 // ---------------------------------------------------------------------------
 static esp_err_t handle_provision_page(httpd_req_t* req)
 {
-    // Trigger a fresh scan
     wifi_manager_scan();
 
     wifi_ap_record_t* results;
     uint16_t count = wifi_manager_get_scan_results(&results);
 
-    // Build network options for select
+    // Build network dropdown options — 16 networks * ~128 bytes each
     static char options[2048];
     options[0] = '\0';
     for (int i = 0; i < count; i++) {
@@ -124,21 +152,21 @@ static esp_err_t handle_provision_page(httpd_req_t* req)
         strncat(options, opt, sizeof(options) - strlen(options) - 1);
     }
 
-    static char html[6144];
-    snprintf(html, sizeof(html),
-        "<!DOCTYPE html><html><head>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>ChromaVertex Setup</title>"
-        "<style>%s</style></head><body>"
+    send_page_header(req, "ChromaVertex Setup");
+
+    httpd_resp_sendstr_chunk(req,
         "<h1>&#128268; ChromaVertex Setup</h1>"
         "<p style='color:#aaa;font-size:0.9em'>"
         "Connect this beacon to your WiFi network.<br>"
-        "Credentials are saved securely and used on every reboot.</p>"
+        "Credentials are saved and used on every reboot.</p>"
         "<form method='POST' action='/provision'>"
         "  <label>Select Network</label>"
         "  <select name='ssid' id='ssid_sel' onchange='updateSsid()'>"
-        "    <option value=''>-- Select network --</option>"
-        "    %s"
+        "    <option value=''>-- Select network --</option>");
+
+    httpd_resp_sendstr_chunk(req, options);
+
+    httpd_resp_sendstr_chunk(req,
         "    <option value='__manual__'>Enter manually...</option>"
         "  </select>"
         "  <label>SSID</label>"
@@ -154,13 +182,9 @@ static esp_err_t handle_provision_page(httpd_req_t* req)
         "  var manual=document.getElementById('ssid_manual');"
         "  manual.style.display=(sel==='__manual__')?'block':'none';"
         "}"
-        "</script>"
-        "</body></html>",
-        CSS, options
-    );
+        "</script>");
 
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
+    send_page_footer(req);
     return ESP_OK;
 }
 
@@ -178,93 +202,65 @@ static esp_err_t handle_provision(httpd_req_t* req)
     buf[received] = '\0';
 
     // Parse form fields
-    char ssid[64]     = {0};
-    char password[64] = {0};
-    char ssid_sel[64] = {0};
+    char ssid_sel[64]    = {0};
+    char ssid_manual[64] = {0};
+    char password[64]    = {0};
 
-    // Extract ssid (from select)
     char* p = strstr(buf, "ssid=");
     if (p) {
         sscanf(p + 5, "%63[^&]", ssid_sel);
-        // URL decode + (space)
         for (char* c = ssid_sel; *c; c++) if (*c == '+') *c = ' ';
     }
 
-    // Extract manual ssid override
-    char ssid_manual[64] = {0};
     p = strstr(buf, "ssid_manual=");
     if (p) sscanf(p + 12, "%63[^&]", ssid_manual);
 
-    // Extract password
     p = strstr(buf, "password=");
     if (p) {
         sscanf(p + 9, "%63[^&]", password);
         for (char* c = password; *c; c++) if (*c == '+') *c = ' ';
     }
 
-    // Use manual SSID if selected
     const char* final_ssid = (strcmp(ssid_sel, "__manual__") == 0 || strlen(ssid_sel) == 0)
                               ? ssid_manual : ssid_sel;
 
     ESP_LOGI(TAG, "Provision request for SSID: '%s'", final_ssid);
+    ESP_LOGI(TAG, "Password: '%s'", password);
 
-    // if (strlen(final_ssid) == 0) {
-    //     static char err_html[1024];
-    //     snprintf(err_html, sizeof(err_html),
-    //         "<!DOCTYPE html><html><head>"
-    //         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    //         "<style>%s</style></head><body>"
-    //         "<h1>&#128268; ChromaVertex Setup</h1>"
-    //         "<div class='msg err'>Please select or enter a network name.</div>"
-    //         "<a href='/'><button>Try Again</button></a>"
-    //         "</body></html>", CSS);
-    //     httpd_resp_set_type(req, "text/html");
-    //     httpd_resp_send(req, err_html, HTTPD_RESP_USE_STRLEN);
-    //     return ESP_OK;
-    // }
-    // Empty SSID error
+    // Empty SSID
     if (strlen(final_ssid) == 0) {
-        httpd_resp_set_type(req, "text/html");
-        httpd_resp_sendstr_chunk(req, "<!DOCTYPE html><html><head>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<style>");
-        httpd_resp_sendstr_chunk(req, CSS);
-        httpd_resp_sendstr_chunk(req, "</style></head><body>"
+        send_page_header(req, "ChromaVertex Setup");
+        httpd_resp_sendstr_chunk(req,
             "<h1>&#128268; ChromaVertex Setup</h1>"
             "<div class='msg err'>Please select or enter a network name.</div>"
-            "<a href='/'><button>Try Again</button></a>"
-            "</body></html>");
-        httpd_resp_sendstr_chunk(req, NULL);
+            "<a href='/'><button>Try Again</button></a>");
+        send_page_footer(req);
         return ESP_OK;
     }
+
     // Attempt connection
     bool ok = wifi_manager_provision(final_ssid, password);
 
-    static char result_html[2048];
+    send_page_header(req, "ChromaVertex Setup");
+
     if (ok) {
-        snprintf(result_html, sizeof(result_html),
-            "<!DOCTYPE html><html><head>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<style>%s</style></head><body>"
+        static char msg[256];
+        snprintf(msg, sizeof(msg),
             "<h1>&#128268; ChromaVertex Setup</h1>"
             "<div class='msg ok'>&#10003; Connected to '%s'!<br>"
-            "Credentials saved. Rebooting in 3 seconds...</div>"
-            "<script>setTimeout(function(){},3000);</script>"
-            "</body></html>", CSS, final_ssid);
+            "Credentials saved. Rebooting...</div>", final_ssid);
+        httpd_resp_sendstr_chunk(req, msg);
     } else {
-        snprintf(result_html, sizeof(result_html),
-            "<!DOCTYPE html><html><head>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<style>%s</style></head><body>"
+        static char msg[256];
+        snprintf(msg, sizeof(msg),
             "<h1>&#128268; ChromaVertex Setup</h1>"
             "<div class='msg err'>&#10007; Could not connect to '%s'.<br>"
             "Check the password and try again.</div>"
-            "<a href='/'><button>Try Again</button></a>"
-            "</body></html>", CSS, final_ssid);
+            "<a href='/'><button>Try Again</button></a>", final_ssid);
+        httpd_resp_sendstr_chunk(req, msg);
     }
 
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, result_html, HTTPD_RESP_USE_STRLEN);
+    send_page_footer(req);
 
     if (ok) {
         vTaskDelay(pdMS_TO_TICKS(3000));
@@ -289,12 +285,10 @@ static esp_err_t handle_root(httpd_req_t* req)
     esp_app_desc_t app_desc;
     esp_ota_get_partition_description(running, &app_desc);
 
-    static char html[4096];
-    snprintf(html, sizeof(html),
-        "<!DOCTYPE html><html><head>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<title>Beacon1</title>"
-        "<style>%s</style></head><body>"
+    send_page_header(req, "Beacon1");
+
+    static char body[2048];
+    snprintf(body, sizeof(body),
         "<h1>&#127881; ChromaVertex Beacon1</h1>"
         "<div class='ver'>Firmware: %s | %s</div>"
 
@@ -321,8 +315,14 @@ static esp_err_t handle_root(httpd_req_t* req)
         "    onclick=\"return confirm('Clear saved WiFi and reboot to setup?')\">"
         "    Forget WiFi &amp; Re-provision"
         "  </button>"
-        "</form>"
+        "</form>",
+        app_desc.version, app_desc.date,
+        current_seq, current_seq, seq_name
+    );
 
+    httpd_resp_sendstr_chunk(req, body);
+
+    httpd_resp_sendstr_chunk(req,
         "<script>"
         "function uploadFw(){"
         "  var f=document.getElementById('fw').files[0];"
@@ -336,24 +336,18 @@ static esp_err_t handle_root(httpd_req_t* req)
         "  xhr.open('POST','/ota',true);"
         "  xhr.setRequestHeader('Content-Type','application/octet-stream');"
         "  xhr.upload.onprogress=function(e){"
-        "    if(e.lengthComputable)b.style.width=(e.loaded/e.total*100)+'%%';"
+        "    if(e.lengthComputable)b.style.width=(e.loaded/e.total*100)+'%';"
         "  };"
         "  xhr.onload=function(){"
-        "    if(xhr.status==200){s.textContent='Done! Rebooting...';b.style.width='100%%';}"
+        "    if(xhr.status==200){s.textContent='Done! Rebooting...';b.style.width='100%';}"
         "    else{s.textContent='Error: '+xhr.responseText;}"
         "  };"
         "  xhr.onerror=function(){s.textContent='Upload failed.';};"
         "  xhr.send(f);"
         "}"
-        "</script>"
-        "</body></html>",
-        CSS,
-        app_desc.version, app_desc.date,
-        current_seq, current_seq, seq_name
-    );
+        "</script>");
 
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
+    send_page_footer(req);
     return ESP_OK;
 }
 
@@ -382,7 +376,7 @@ static esp_err_t handle_set(httpd_req_t* req)
 }
 
 // ---------------------------------------------------------------------------
-// GET /status
+// GET /status — JSON
 // ---------------------------------------------------------------------------
 static esp_err_t handle_status(httpd_req_t* req)
 {
@@ -412,7 +406,7 @@ static esp_err_t handle_status(httpd_req_t* req)
 }
 
 // ---------------------------------------------------------------------------
-// POST /forget — Clear WiFi credentials and reboot to provisioning
+// POST /forget — Clear WiFi credentials and reboot
 // ---------------------------------------------------------------------------
 static esp_err_t handle_forget(httpd_req_t* req)
 {
@@ -428,7 +422,7 @@ static esp_err_t handle_forget(httpd_req_t* req)
 }
 
 // ---------------------------------------------------------------------------
-// POST /ota
+// POST /ota — Firmware upload
 // ---------------------------------------------------------------------------
 static esp_err_t handle_ota(httpd_req_t* req)
 {
@@ -482,22 +476,21 @@ static esp_err_t handle_ota(httpd_req_t* req)
 }
 
 // ---------------------------------------------------------------------------
-// Start server — registers different handlers depending on mode
+// Start server
 // ---------------------------------------------------------------------------
 void web_server_start(void)
 {
-    httpd_config_t config     = HTTPD_DEFAULT_CONFIG();
-    config.server_port        = 80;
-    config.max_uri_handlers   = 12;
-    config.stack_size         = 8192;
-    config.recv_wait_timeout  = 30;
-    config.send_wait_timeout  = 30;
+    httpd_config_t config    = HTTPD_DEFAULT_CONFIG();
+    config.server_port       = 80;
+    config.max_uri_handlers  = 12;
+    config.stack_size        = 8192;   // default 4096 too small for HTML generation
+    config.recv_wait_timeout = 30;
+    config.send_wait_timeout = 30;
 
     httpd_handle_t server = NULL;
     ESP_ERROR_CHECK(httpd_start(&server, &config));
 
     if (wifi_manager_is_provisioning()) {
-        // Provisioning mode — only serve setup page
         httpd_uri_t provision_page = { .uri="/",          .method=HTTP_GET,  .handler=handle_provision_page, .user_ctx=NULL };
         httpd_uri_t provision_post = { .uri="/provision", .method=HTTP_POST, .handler=handle_provision,      .user_ctx=NULL };
         httpd_uri_t status_uri     = { .uri="/status",    .method=HTTP_GET,  .handler=handle_status,         .user_ctx=NULL };
@@ -508,7 +501,6 @@ void web_server_start(void)
 
         ESP_LOGI(TAG, "Provisioning server started — http://192.168.4.1");
     } else {
-        // Normal mode — full control interface
         httpd_uri_t root_uri   = { .uri="/",       .method=HTTP_GET,  .handler=handle_root,   .user_ctx=NULL };
         httpd_uri_t set_uri    = { .uri="/set",     .method=HTTP_POST, .handler=handle_set,    .user_ctx=NULL };
         httpd_uri_t status_uri = { .uri="/status",  .method=HTTP_GET,  .handler=handle_status, .user_ctx=NULL };
