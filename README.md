@@ -92,6 +92,8 @@ The control page provides:
 
 JSON status is available at `http://beacon1.local/status`
 
+![Web Server](/documentation/WebServer.png)
+
 ---
 
 ## YAML → C++ Component Map
