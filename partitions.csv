@@ -1,0 +1,17 @@
+# ChromaVertex Beacon1 partition table
+# OTA requires two app partitions of equal size
+# Total flash: 4MB
+# nvs       : 24KB
+# phy_init  : 4KB
+# ota_data  : 8KB  (tracks which OTA slot is active)
+# factory   : not used with OTA
+# ota_0     : 1.8MB (active firmware slot)
+# ota_1     : 1.8MB (update firmware slot)
+# spiffs    : remaining
+
+# Name,     Type, SubType,  Offset,   Size,    Flags
+nvs,        data, nvs,      0x9000,   0x6000,
+phy_init,   data, phy,      0xf000,   0x1000,
+ota_data,   data, ota,      0x10000,  0x2000,
+ota_0,      app,  ota_0,    0x20000,  0x1C0000,
+ota_1,      app,  ota_1,    0x1E0000, 0x1C0000,

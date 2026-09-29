@@ -1,0 +1,9 @@
+## IDF Component Manager manifest
+## IMPORTANT: This file must remain in main/ not the project root.
+## If idf.py add-dependency creates a root-level idf_component.yml,
+## move it here and delete the root copy.
+dependencies:
+  espressif/led_strip: ">=2.5.0"
+  espressif/mdns: ">=1.0.0"
+  idf:
+    version: ">=5.0.0"

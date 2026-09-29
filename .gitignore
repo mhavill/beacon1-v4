@@ -1,0 +1,26 @@
+# Build output
+build/
+sdkconfig
+sdkconfig.old
+
+# dependencies.lock is regenerated automatically
+dependencies.lock
+
+# Keep managed_components/ in the repo so team members don't need
+# internet access to build. Components are pinned by idf_component.yml.
+# managed_components/   <-- intentionally NOT ignored
+
+# Credentials — NEVER commit real secrets
+# main/secrets.h is ignored — use main/secrets.h.template as reference
+main/secrets.h
+
+# VS Code local settings — machine specific paths
+.vscode/settings.json
+
+# What IS committed:
+# main/idf_component.yml       — component declarations
+# main/secrets.h.template      — credential template (no real values)
+# managed_components/          — downloaded components (for offline builds)
+# .vscode/c_cpp_properties.json — IntelliSense config
+# partitions.csv
+# sdkconfig.defaults
