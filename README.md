@@ -3,11 +3,8 @@
 Firmware for the ChromaVertex arena corner beacons.  
 Each beacon is a 267mm WS2812B LED tower (16 LEDs, 8 active) mounted on an  
 ESP32-C3 SuperMini, used to provide visual position references for the VertexBot swarm.
-
 ![Beacon](/documentation/beacon.png)
-
 ---
-
 
 ## Two Implementations
 
@@ -68,11 +65,24 @@ Beacons are pre-flashed and self-configuring. No reflashing required.
 **First power-on (or after "Forget WiFi"):**
 1. The beacon starts a hotspot: **`ChromaVertex-Setup`** (password: `chromavertex`)
 2. Connect your phone or laptop to that hotspot
-3. Open **`http://192.168.4.1`** in your browser
-4. Select your WiFi network from the dropdown and enter your password
-5. Tap **Connect & Save** — the beacon tests the connection
-6. On success it saves the credentials and reboots automatically
-7. From now on it connects to your network on every power-on
+3. **The setup page opens automatically** — iOS, Android and Windows all detect
+   the captive portal and pop up a "Sign in to network" dialog
+4. If it doesn't open automatically, navigate to **`http://192.168.4.1`** manually
+5. Select your WiFi network from the dropdown and enter your password
+6. Tap **Connect & Save** — the beacon tests the connection
+7. On success it saves the credentials and reboots automatically
+8. From now on it connects to your network on every power-on
+
+![Captive Portal](/documentation/captive.png)
+
+**Captive portal OS compatibility:**
+
+| Platform | Trigger | Notes |
+|---|---|---|
+| iOS | `/hotspot-detect.html` | Opens Safari automatically |
+| Android | `/generate_204` | Opens browser automatically |
+| Windows | `/ncsi.txt`, `/connecttest.txt` | May show notification |
+| macOS | `/hotspot-detect.html` | Opens browser automatically |
 
 **To change the WiFi network:**
 - Open the control page at `http://beacon1.local`
@@ -91,9 +101,7 @@ The control page provides:
 - **Forget WiFi** — clear saved credentials and re-provision
 
 JSON status is available at `http://beacon1.local/status`
-
 ![Web Server](/documentation/WebServer.png)
-
 ---
 
 ## YAML → C++ Component Map
@@ -261,6 +269,8 @@ Documented here to save the next person the same debugging time.
 | `0x200` auth fail during provisioning | WiFi driver retains AP state affecting STA auth | Call `esp_wifi_deinit()` + `esp_wifi_init()` before STA attempt |
 | `mdns` component not found | Moved to component manager in 5.5.1 | Add `espressif/mdns: ">=1.0.0"` to `main/idf_component.yml` |
 | Wrong chip target after project move | VS Code retains `IDF_TARGET` env var from previous session | Clear with `$env:IDF_TARGET = ""` then `idf.py set-target esp32c3` |
+| `sockaddr_in` designated initialiser error | C++ requires all or no designated initialisers; `.sin_addr.s_addr` uses nested designator | Use `memset` + individual field assignment instead |
+| Captive portal URIs returning 404 | Captive portal handlers registered in wrong `if/else` block | Register under `wifi_manager_is_provisioning()` block, not the normal mode block |
 
 ---
 

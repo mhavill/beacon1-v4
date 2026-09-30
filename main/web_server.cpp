@@ -74,6 +74,18 @@ static const char* CSS =
     "#ota-status{margin-top:8px;font-size:0.85em;min-height:1.2em;}";
 
 // ---------------------------------------------------------------------------
+// GET /generate_204, /hotspot-detect.html, /ncsi.txt etc.
+// Captive portal detection — redirect to provisioning page
+// ---------------------------------------------------------------------------
+static esp_err_t handle_captive_redirect(httpd_req_t* req)
+{
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // Basic auth
 // ---------------------------------------------------------------------------
 static bool check_auth(httpd_req_t* req)
@@ -482,7 +494,7 @@ void web_server_start(void)
 {
     httpd_config_t config    = HTTPD_DEFAULT_CONFIG();
     config.server_port       = 80;
-    config.max_uri_handlers  = 12;
+    config.max_uri_handlers  = 16;
     config.stack_size        = 8192;   // default 4096 too small for HTML generation
     config.recv_wait_timeout = 30;
     config.send_wait_timeout = 30;
@@ -495,9 +507,21 @@ void web_server_start(void)
         httpd_uri_t provision_post = { .uri="/provision", .method=HTTP_POST, .handler=handle_provision,      .user_ctx=NULL };
         httpd_uri_t status_uri     = { .uri="/status",    .method=HTTP_GET,  .handler=handle_status,         .user_ctx=NULL };
 
+        // Captive portal detection endpoints — must be here, in provisioning mode
+        httpd_uri_t cap1 = { .uri="/generate_204",        .method=HTTP_GET, .handler=handle_captive_redirect, .user_ctx=NULL };
+        httpd_uri_t cap2 = { .uri="/hotspot-detect.html", .method=HTTP_GET, .handler=handle_captive_redirect, .user_ctx=NULL };
+        httpd_uri_t cap3 = { .uri="/ncsi.txt",            .method=HTTP_GET, .handler=handle_captive_redirect, .user_ctx=NULL };
+        httpd_uri_t cap4 = { .uri="/connecttest.txt",     .method=HTTP_GET, .handler=handle_captive_redirect, .user_ctx=NULL };
+        httpd_uri_t cap5 = { .uri="/redirect",            .method=HTTP_GET, .handler=handle_captive_redirect, .user_ctx=NULL };
+
         httpd_register_uri_handler(server, &provision_page);
         httpd_register_uri_handler(server, &provision_post);
         httpd_register_uri_handler(server, &status_uri);
+        httpd_register_uri_handler(server, &cap1);
+        httpd_register_uri_handler(server, &cap2);
+        httpd_register_uri_handler(server, &cap3);
+        httpd_register_uri_handler(server, &cap4);
+        httpd_register_uri_handler(server, &cap5);
 
         ESP_LOGI(TAG, "Provisioning server started — http://192.168.4.1");
     } else {
@@ -514,5 +538,6 @@ void web_server_start(void)
         httpd_register_uri_handler(server, &forget_uri);
 
         ESP_LOGI(TAG, "Control server started on port 80");
+
     }
 }

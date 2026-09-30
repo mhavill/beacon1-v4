@@ -33,8 +33,86 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
+#include "freertos/task.h"
 
 static const char* TAG = "wifi_manager";
+
+// ---------------------------------------------------------------------------
+// Captive portal DNS server
+// Redirects all DNS queries to 192.168.4.1
+// ---------------------------------------------------------------------------
+static void dns_server_task(void* pvParameters)
+{
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family      = AF_INET;
+    server_addr.sin_port        = htons(53);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    bind(sock, (struct sockaddr*)&server_addr, sizeof(server_addr));
+
+    static uint8_t buf[512];
+
+    while (true) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int len = recvfrom(sock, buf, sizeof(buf), 0,
+                           (struct sockaddr*)&client_addr, &client_len);
+        if (len < 0) continue;
+
+        // Build DNS response pointing to 192.168.4.1
+        uint8_t response[512];
+        memcpy(response, buf, len);
+
+        // Set response flags: QR=1, AA=1, RCODE=0
+        response[2] = 0x81;
+        response[3] = 0x80;
+        // Answer count = 1
+        response[6] = 0x00;
+        response[7] = 0x01;
+
+        // Append answer section
+        int pos = len;
+        // Pointer to question name
+        response[pos++] = 0xC0;
+        response[pos++] = 0x0C;
+        // Type A
+        response[pos++] = 0x00;
+        response[pos++] = 0x01;
+        // Class IN
+        response[pos++] = 0x00;
+        response[pos++] = 0x01;
+        // TTL = 0 (no caching)
+        response[pos++] = 0x00;
+        response[pos++] = 0x00;
+        response[pos++] = 0x00;
+        response[pos++] = 0x00;
+        // RDLENGTH = 4
+        response[pos++] = 0x00;
+        response[pos++] = 0x04;
+        // RDATA = 192.168.4.1
+        response[pos++] = 192;
+        response[pos++] = 168;
+        response[pos++] = 4;
+        response[pos++] = 1;
+
+        sendto(sock, response, pos, 0,
+               (struct sockaddr*)&client_addr, client_len);
+    }
+
+    close(sock);
+    vTaskDelete(NULL);
+}
+
+static void start_dns_server(void)
+{
+    xTaskCreate(dns_server_task, "dns_server", 4096, NULL, 5, NULL);
+    ESP_LOGI(TAG, "Captive portal DNS started");
+}
+
 
 // ---------------------------------------------------------------------------
 // NVS namespace and keys
@@ -254,6 +332,9 @@ static void start_provisioning_ap(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_ERROR_CHECK(esp_wifi_start());
+    start_dns_server();   // captive portal DNS
 
     wifi_manager_scan();
 
