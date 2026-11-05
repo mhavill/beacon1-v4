@@ -22,12 +22,15 @@
 #include "wifi_manager.h"
 #include "led_manager.h"
 #include "web_server.h"
+#include "secrets.h"
 
 static const char* TAG = "main";
 
 // Beacon identity — change per beacon (beacon1, beacon2, beacon3, beacon4)
-#define BEACON_HOSTNAME  "beacon1"
-#define BEACON_BOOT_SEQ  1          // sequence to display on power-on
+// #define BEACON_HOSTNAME  "beacon1"
+// #define BEACON_BOOT_SEQ  1          // sequence to display on power-on  MOVED TO secrets.h
+
+
 
 static void mdns_start(void)
 {

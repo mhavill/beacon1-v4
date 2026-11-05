@@ -7,7 +7,7 @@
  *   1. Load saved credentials from NVS (set by previous provisioning)
  *      - Retry up to 3 times with 2s delay (Omada router cold-start timing)
  *   2. Try hardcoded credentials from secrets.h (developer fallback)
- *   3. Start provisioning AP at 192.168.4.1
+ *   3. Start provisioning AP at 192.168.4.n where n = Beacon number (1-4)
  *      - Scans available networks
  *      - User selects SSID and enters password via browser
  *      - On success: saves to NVS, reboots
@@ -41,7 +41,7 @@ static const char* TAG = "wifi_manager";
 
 // ---------------------------------------------------------------------------
 // Captive portal DNS server
-// Redirects all DNS queries to 192.168.4.1
+// Redirects all DNS queries to 192.168.4.n where n = Beacon number (1-4)
 // ---------------------------------------------------------------------------
 static void dns_server_task(void* pvParameters)
 {
@@ -63,7 +63,7 @@ static void dns_server_task(void* pvParameters)
                            (struct sockaddr*)&client_addr, &client_len);
         if (len < 0) continue;
 
-        // Build DNS response pointing to 192.168.4.1
+        // Build DNS response pointing to 192.168.4.n wheare n= Beacon number (1-4)
         uint8_t response[512];
         memcpy(response, buf, len);
 
@@ -341,7 +341,7 @@ static void start_provisioning_ap(void)
     vTaskDelay(pdMS_TO_TICKS(500));
     ESP_LOGI(TAG, "Provisioning AP ready");
     ESP_LOGI(TAG, "Connect to '%s' (password: %s)", AP_SSID, AP_PASSWORD);
-    ESP_LOGI(TAG, "Then open http://192.168.4.1");
+    ESP_LOGI(TAG, "Then open http://192.168.4.n in your browser (n = Beacon number 1-4)");
 }
 
 // ---------------------------------------------------------------------------
