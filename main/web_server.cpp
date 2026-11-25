@@ -81,7 +81,7 @@ static const char* CSS =
 static esp_err_t handle_captive_redirect(httpd_req_t* req)
 {
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.5/");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.2/");
     httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
@@ -298,11 +298,11 @@ static esp_err_t handle_root(httpd_req_t* req)
     esp_app_desc_t app_desc;
     esp_ota_get_partition_description(running, &app_desc);
 
-    send_page_header(req, "Beacon5");
+    send_page_header(req, "Beacon2");
 
     static char body[2048];
     snprintf(body, sizeof(body),
-        "<h1>&#127881; ChromaVertex Beacon5</h1>"
+        "<h1>&#127881; ChromaVertex Beacon2</h1>"
         "<div class='ver'>Firmware: %s | %s</div>"
 
         "<h2>LED Sequence</h2>"
