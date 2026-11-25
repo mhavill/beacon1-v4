@@ -29,8 +29,8 @@ extern "C" {
  * Sequences 33-38: all 8 active LEDs in a single solid colour (CMYGRB)
  */
 
-#define BEACON_NUM_LEDS      16
-#define BEACON_ACTIVE_LEDS   8
+#define BEACON_NUM_LEDS      18
+#define BEACON_ACTIVE_LEDS   10
 #define BEACON_LED_PIN       GPIO_NUM_4
 #define BEACON_NUM_SEQUENCES 38
 
